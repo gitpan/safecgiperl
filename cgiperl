@@ -1,0 +1,205 @@
+#!/usr/local/bin/perl5
+#
+# Copyright (C) Malcolm Beattie 1995
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+#  4 Oct 1995  mail() added.
+
+require 5.001;
+require Safe;
+use Carp;
+use strict qw(vars subs);
+
+#
+# File-scope variable declarations
+#
+
+my $die_in_html = 0;	# set when fatal errors are output in HTML style
+my $program;		# program name
+my $usage = "Usage: cgiperl [-i] path\n";
+my $cpt;		# the Safe compartment for executing code in
+my $error;		# holds any error from running code in $cpt
+
+#
+# Wrappers for restricted functions
+#
+
+#
+# Invoking share_open on a compartment places an "open" function into
+# the compartment. This open function behaves somewhat like the real
+# perl "open" operator with the following restrictions:
+# (1) Only files can be opened--no pipes, dups or forks.
+# (2) Files can only be opened for reading if owned by the process uid
+# (3) Files can only be opened for writing by specifying a filename
+#     containing no slashes which is then taken to live in ~/cgi/out.
+# BUGS: The error variable $! is not set nicely on such error returns.
+#
+
+sub share_open {
+    my $cpt = shift;
+    my $root = $cpt->root();
+    *{$cpt->varglob("open")} = sub {
+	my ($fh, $file) = @_;
+	my $caller = caller;
+	my ($mode, $filename, $home);
+	my $cgiout = "cgi/out";
+    
+	$caller =~ s/^$root//;		# leave leading ::
+	$fh = sprintf("%s::%s", $caller, $fh);
+	$file =~ /^(			# store mode in $1 for later
+		    \+?			# optional leading +
+		    (?: >> | > | <?)	# append, output or (optional) input
+		   )\s*			# ignore white space before filename
+		   (.+)			# filename (non-blank) to $2
+		 /sx
+	    or return 0;	     
+	$mode = $1 || "<";
+	$filename = $2;
+	$filename =~ s/\s+$//;		# remove trailing white space
+	$filename .= "\0";		# append \0 to disallow trailing |
+	# Prepend leading ./ unless $filename already starts with a /
+	if ($mode =~ /[+>]/) {
+	    # Make/check $filename legal for output
+	    return 0 if $filename =~ m{/};	# no slashes allowed
+	    $home = (getpwuid($<))[7] or return 0;
+	    $filename = "$home/$cgiout/$filename"; # $home gives leading /
+	    # Notice that we do not try to prevent symlinks
+	    return 0 unless -e $filename;	# Must exist already
+	} elsif ($filename !~ m{^/}) {
+	    # Force "safe" filename (i.e. no whitespace or & tokens).
+	    $filename = "./$filename";
+	}
+	local(*TMP);
+	open(TMP, $mode . $filename) or return 0;
+	if ((stat(TMP))[4] != $<) {
+	    # Check that we own the file
+	    close TMP;
+	    return 0;
+	}
+	# Move the file over to the requested filehandle
+	if (!open($fh, $mode . "&TMP")) {
+	    # This should only fail if we were very near our open file limit
+	    close TMP;
+	    return 0;
+	}
+	close TMP;
+	return 1;
+    }
+}
+
+#
+# The pack and unpack wrappers prevent use of the "p" and "P"
+# characters in a template which allow direct construction of
+# perl variables which access a given pointer address.
+#
+
+sub pack {
+    my $template = shift;
+    croak "restrictions forbid p or P in pack template" if $template =~ /p/i;
+    return pack($template, @_);
+}
+	
+sub unpack {
+    my $template = shift;
+    croak "restrictions forbid p or P in unpack template" if $template =~ /p/i;
+    return unpack($template, $_[1]);
+}
+	
+#
+# Allow mail to be sent.
+#
+sub mail {
+    die 'Usage: mail($recipient, $subject, $contents)' unless @_ == 3;
+    my ($recipient, $subject, $contents) = @_;
+    local(*MAILHANDLE);
+    # Sanity checks
+    return 0 if $recipient =~ /^-/
+	|| length($recipient) > 255
+	|| length($subject) > 2037;
+    $recipient =~ tr/\n\r\f//d;
+    $subject =~ tr/\n\r\f//d;
+    $contents =~ s/^From />From /gm;
+    $contents =~ s/^\.$/../gm;
+    my $pid = open(MAILHANDLE, "|-");
+    return 0 unless defined($pid);
+    if (!$pid) {
+	# child
+	exec("/usr/bin/mail", $recipient) or exit(255);
+    }
+    # parent
+    print MAILHANDLE "To: $recipient\n";
+    print MAILHANDLE "Subject: $subject\n\n";
+    print MAILHANDLE $contents;
+    close MAILHANDLE;
+    return !($? >> 8);
+}
+
+#
+#  Die function which can use HTML to moan
+#
+
+sub Die
+{
+    my $error = shift;
+    if ($die_in_html) {
+	print "Content-type: text/html\n\n";
+	print "<HEAD><TITLE>500 $error</TITLE></HEAD>\n";
+	print "<BODY><H2>Error code 500</H2>\n$error\n</BODY>\n";
+	exit 1;
+    } else {
+	die $error;
+    }
+}
+
+#
+# Start up stuff
+#
+
+if (@ARGV == 1) {
+    # Invocation as a CGI program
+    $die_in_html = 1;
+} elsif (@ARGV == 2) {
+    my $option = shift;
+    Die($usage) unless $option eq "-i"; # the only option we understand
+    # Don't set die_in_html since we're running interactively
+} else {
+    Die($usage);
+}
+
+$program = $ARGV[0];
+Die("program $program not found") unless -r $program;
+
+$cpt = new Safe;
+# Sanity check: confirm that this version of perl really is op_mask aware.
+if ($cpt->reval('open()') !~ /open trapped by operation mask/) {
+    Die(<<'EOT');
+Your version of perl is not op_mask aware. See the file README
+that comes with the distribution of the Safe extension to perl.
+EOT
+}
+
+#
+# Share STDIN and STDOUT but no other filehandles.
+# Share %ENV so that they can see the environment variables.
+# Share $" so that they can interpolate arrays in double-quotish contexts.
+#
+$cpt->share(qw($" *STDIN *STDOUT %ENV &pack &unpack &mail));
+share_open($cpt);
+
+$error = $cpt->rdo($program);
+if ($error) {
+    Die("Program error: $error");
+}
+exit 0;

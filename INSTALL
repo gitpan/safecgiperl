@@ -1,0 +1,51 @@
+These installation instructions assume that you already have installed
+perl5 and the Safe extension module for perl5 (see the file README for
+version details and availability).
+
+1) Edit the #! line of cgiperl if perl5 on your system isn't available
+   as /usr/local/bin/perl5. Install cgiperl into /usr/local/bin. It
+   must *not* be setuid root and should be executable by everyone.
+   If you don't install it in /usr/local/bin then you'll have to edit
+   the #define CGIPERL_PATH line in safeperl.c to refer to where you
+   do install cgiperl.
+
+2) I've assumed in the README file, here in the INSTALL file and in the
+   comments and usage message of safeperl that the CGI binary directory
+   for the web server is ...../cgi-bin. If it isn't, then you'll probably
+   want to correct those pathnames.
+
+3) safeperl.c is the source of a program that needs to be installed
+   setuid root on the web server. As with any such program, read the
+   source and convince yourself that it is safe to do so.
+
+4) There's no Makefile since all you should need to do is
+       make safeperl
+   No fancy flags, libraries or anything should be needed. If you have
+   a pre-ANSI compiler or other old system without setrlimit or openlog
+   or somthing, then you'll have to tweak it yourself.
+
+5) Install safeperl in the cgi-bin directory of your web server (see
+   (2) above) with the following ownership and permissions:
+   * if your web server runs with gid httpd, then ownership of safeperl
+     should be root.httpd and permissions should be 04750 (i.e. setuid
+     and executable only by the gid under which your server runs).
+   * if your web server doesn't run under a special gid of its own,
+     then you can *consider* setting user ownership of safeperl to root,
+     group ownership to anything and permissions to 04755.
+   With the second options above, it is possible for anybody to
+   execute safeperl from the command line. This is not necessarily a
+   security hole--it depends on your security policy. It allows any
+   user of the system the ability to specify a safecgiperl URL and have
+   the corresponding CGI program run. It runs in exactly the same way
+   as it would have done under the web server, but it doesn't go through
+   the web server. This might worry you if, for example, your web server
+   has access restrictions on a per-client basis or if the audit trail of
+   the web server is vital for all CGI accesses. On the other hand, it
+   might not worry you at all. Your decision.
+
+Malcolm Beattie
+mbeattie@sable.ox.ac.uk
+24 October 1995
+
+
+          

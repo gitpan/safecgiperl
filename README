@@ -1,0 +1,144 @@
+			  safecgiperl beta1
+
+Introduction
+------------
+
+This distribution is intended to be installed on a World Wide Web
+server and allows CGI programs written in Perl5 to be run in a
+sanitised environment. It makes use of the Safe extension module
+for Perl5--any attempted unsafe operation in the CGI program is
+trapped and causes a fatal compile-time error. Wrappers and utility
+functions for useful but potentially unsafe operations (such as
+opening files and sending mail) can be written in (unrestricted) perl
+and then shared with the sanitised compartment.
+
+
+Pre-requisites
+--------------
+
+* Perl5, version 5.001m or later. Available widely.
+* The Safe extension module for Perl5. Current version is beta2, available
+  as ftp://ftp.ox.ac.uk/pub/perl/Safe-b2.tar.gz from its home site.
+
+
+Description
+-----------
+
+This distribution contains two programs:
+safeperl.c	The C source of a program which needs to be installed
+		setuid root in the cgi-bin directory of the web server.
+		It is a small program and, just like with any suid root
+		program, the systems administrator should convince
+		himself/herself of its security before installing it.
+cgiperl		A Perl5 program which lives in /usr/local/bin (or
+		similar location). Once safeperl has done some sanity
+		checking and switched its identity to the relvant user,
+		cgiperl is invoked to create a Safe compartment and run
+		the user's CGI program within that compartment.
+
+
+Capabilities
+------------
+
+Once safecgiperl has been installed, any user, quux say, can place a
+perl program in ~/cgi/bin, foo say, and the URL
+    http://www.somewhere/cgi-bin/safeperl/quux/foo
+will cause the web server to run the perl program ~quux/cgi/bin/foo
+as a CGI program under the uid of quux *provided* foo does not try to
+use any restricted perl operators. The remaining sections are addressed
+to those who write CGI programs intended to run under this system.
+For installation instructions, see the file INSTALL.
+
+
+
+Perl programming in the safecgiperl environment
+-----------------------------------------------
+
+The web server uses the Safe extension to Perl version 5 to run
+user-written CGI programs. For those of you who aren't familiar with
+Perl5, there aren't many differences that you are likely to notice.
+One is that the @ character now needs to be escaped within double
+quotes--Perl no longer guesses whether you meant to interpolate an
+array or not. Running perl with the -w flag will warn about this and
+many other potential errors besides. Although Perl5 is mostly backward
+compatible with Perl4, there are many new features in Perl5 which you
+can take advantage of: lexical variables, reference variables (arrays
+of arrays of hashes...), object oriented classes/methods, first class
+anonymous subs, closures and more.
+
+As mentioned above, the web server runs your CGI Perl program in a
+special compartment which restricts what operators are allowed. You can
+mimic the behaviour of the web server invoking your program by typing
+    cgiperl foo
+(replacing foo by the name of your program). This mimics the web
+server's invocation even to the extent of displaying errors in
+HTML markup. You can type
+    cgiperl -i foo
+to have any errors displayed in a more human readable form.
+
+
+Restricted operators
+--------------------
+
+There are many Perl operators not available to the compartment in
+which your CGI program is run. These mostly include operators which
+provide access to the operating system. The following list is not
+exhaustive but includes the most common excluded operators:
+* system, `backticks`, exec, fork, syscall, signal handlers,
+  pipes (including open(FOO, "|bar") and open(FOO, "bar|"))
+* network access (socket, bind, connect, ...)
+* File munging (rename, link, opendir, chown, ...)
+* System V IPC (shared memory, message queues, semaphores)
+* File tests (-r, -w, -l, ...)
+* Calling perl on other files (require, use, do 'file')
+
+Opening files for reading/writing is restricted. The "open" command
+is subject to the following restrictions:
+* Files opened for reading must be owned by the user.
+* Files opened for writing must be opened by using a filename containing
+  no "/" characters. The filename is taken to live in the directory
+  ~/cgi/out and the file must already exist at the time the open is
+  performed. It can be a symbolic link if desired.
+
+
+Sending mail
+------------
+
+There is a subroutine available which allows the sending of
+mail from a CGI program. The syntax is
+    mail(RECIPIENT, SUBJECT, CONTENTS);
+For example,
+    mail('foo@bar.baz', 'Test mail', "Hello world\n")
+        or oops("mail failed");
+Note that @ interpolates an array when used in double quotes ("")
+(unlike in perl4 which tried to guess whether you wanted to interpolate
+or have a raw @ in there). If you want to hard-wire an email address
+with an @ in it then either use single quotes or prefix the @ with a
+backslash ("$user\@wherever"). Note also that you gather the whole
+message together into one string to pass as the third argument.
+
+
+Installing your CGI program
+---------------------------
+
+Once you have written and debugged your CGI program, put it in
+~/cgi/bin (creating that directory if necessary). There is no need to
+include a leading '#!' line, nor will one be honoured if you do.
+Supposing that your username is quux and your program is called foo,
+the URL which will cause the web server to invoke your program is
+ http://yourwebserver.somewhere/cgi-bin/safeperl/quux/foo
+When the web server runs your program it will run it with the
+privileges of *your* username.
+
+Any use of a masked operator in your Perl program will trigger a
+compile time error (which your browser will display) and the program
+will not run at all. By a "masked operator", I mean an operator
+which is restricted but which, unlike "open", is not aliased to a
+secure sanitised version. The error message will be something like
+ <opname> trapped by operation mask at line ...
+where <opname> is replaced by the name of the offending operator.
+
+
+Malcolm Beattie
+mbeattie@sable.ox.ac.uk
+24 October 1995
